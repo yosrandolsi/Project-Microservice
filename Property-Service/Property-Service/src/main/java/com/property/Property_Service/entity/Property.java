@@ -1,7 +1,5 @@
 package com.property.Property_Service.entity;
 
-
-
 import jakarta.persistence.*;
 import jakarta.validation.constraints.*;
 import lombok.*;
@@ -20,16 +18,21 @@ public class Property {
 
     @NotBlank(message = "Le type est obligatoire")
     @Column(nullable = false)
-    private String type; // ex: Appartement, Villa, Studio
+    private String type;
 
     @NotBlank(message = "L'adresse est obligatoire")
     @Column(nullable = false)
     private String address;
 
-    @NotNull(message = "Le prix de location est obligatoire")
+    @NotNull(message = "Le prix est obligatoire")
     @Positive(message = "Le prix doit être positif")
     @Column(nullable = false)
     private Double rentPrice;
+
+
+    @Embedded
+    @NotNull(message = "La description est obligatoire")
+    private Description description;
 
     @Builder.Default
     @Column(nullable = false)

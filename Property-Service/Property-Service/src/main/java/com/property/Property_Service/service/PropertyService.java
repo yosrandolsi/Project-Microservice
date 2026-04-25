@@ -1,97 +1,96 @@
 package com.property.Property_Service.service;
 
-
-
 import com.property.Property_Service.dto.*;
 import com.property.Property_Service.entity.Property;
-import com.property.Property_Service.exception.*;
 import com.property.Property_Service.repository.PropertyRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
-@Transactional
 public class PropertyService {
 
-    private final PropertyRepository propertyRepository;
+    private final PropertyRepository repository;
 
-    // ─── CREATE ───────────────────────────────────────────────────────────────
+    // CREATE
     public PropertyResponse create(PropertyRequest request) {
+
         Property property = Property.builder()
                 .type(request.getType())
                 .address(request.getAddress())
                 .rentPrice(request.getRentPrice())
+                .description(request.getDescription())
                 .available(true)
                 .build();
-        return toResponse(propertyRepository.save(property));
+
+        return toResponse(repository.save(property));
     }
 
-    // ─── READ ALL ─────────────────────────────────────────────────────────────
-    @Transactional(readOnly = true)
+    // GET ALL
     public List<PropertyResponse> getAll() {
-        return propertyRepository.findAll()
-                .stream()
-                .map(this::toResponse)
-                .collect(Collectors.toList());
+        return repository.findAll().stream().map(this::toResponse).toList();
     }
 
-    // ─── READ AVAILABLE ───────────────────────────────────────────────────────
-    @Transactional(readOnly = true)
-    public List<PropertyResponse> getAvailable() {
-        return propertyRepository.findByAvailableTrue()
-                .stream()
-                .map(this::toResponse)
-                .collect(Collectors.toList());
-    }
-
-    // ─── READ BY ID ───────────────────────────────────────────────────────────
-    @Transactional(readOnly = true)
+    // GET BY ID
     public PropertyResponse getById(Long id) {
-        return toResponse(findOrThrow(id));
+        return toResponse(repository.findById(id).orElseThrow());
     }
 
-    // ─── UPDATE ───────────────────────────────────────────────────────────────
+    // UPDATE
     public PropertyResponse update(Long id, PropertyRequest request) {
-        Property property = findOrThrow(id);
-        property.setType(request.getType());
-        property.setAddress(request.getAddress());
-        property.setRentPrice(request.getRentPrice());
-        return toResponse(propertyRepository.save(property));
+
+        Property p = repository.findById(id).orElseThrow();
+
+        p.setType(request.getType());
+        p.setAddress(request.getAddress());
+        p.setRentPrice(request.getRentPrice());
+        p.setDescription(request.getDescription());
+
+        return toResponse(repository.save(p));
     }
 
-    // ─── DELETE ───────────────────────────────────────────────────────────────
+    // DELETE
     public void delete(Long id) {
-        findOrThrow(id);
-        propertyRepository.deleteById(id);
+        repository.deleteById(id);
     }
 
-    // ─── PATCH AVAILABILITY ───────────────────────────────────────────────────
+    // AVAILABILITY
     public PropertyResponse updateAvailability(Long id, AvailabilityRequest request) {
-        Property property = findOrThrow(id);
-        property.setAvailable(request.getAvailable());
-        return toResponse(propertyRepository.save(property));
+
+        Property p = repository.findById(id).orElseThrow();
+        p.setAvailable(request.getAvailable());
+
+        return toResponse(repository.save(p));
     }
 
-    // ─── INTERNAL: vérifié par Contract-Service via Feign ────────────────────
-    @Transactional(readOnly = true)
-    public void checkAvailability(Long id) {
-        Property property = findOrThrow(id);
-        if (!property.getAvailable()) {
-            throw new PropertyNotAvailableException(id);
+    // 🔥 SEARCH AVANCÉE
+    public List<PropertyResponse> search(String keyword,
+                                         Integer rooms,
+                                         Double minSurface,
+                                         Double maxSurface,
+                                         Double minPrice,
+                                         Double maxPrice,
+                                         Boolean available) {
+
+        // 🔥 bonus S+2
+        if (keyword != null && keyword.matches("S\\+\\d+")) {
+            rooms = Integer.parseInt(keyword.split("\\+")[1]);
         }
+
+        return repository.advancedSearch(
+                keyword,
+                rooms,
+                minSurface,
+                maxSurface,
+                minPrice,
+                maxPrice,
+                available
+        ).stream().map(this::toResponse).toList();
     }
 
-    // ─── HELPERS ──────────────────────────────────────────────────────────────
-    private Property findOrThrow(Long id) {
-        return propertyRepository.findById(id)
-                .orElseThrow(() -> new PropertyNotFoundException(id));
-    }
-
+    // MAPPER
     private PropertyResponse toResponse(Property p) {
         return PropertyResponse.builder()
                 .id(p.getId())
@@ -99,6 +98,15 @@ public class PropertyService {
                 .address(p.getAddress())
                 .rentPrice(p.getRentPrice())
                 .available(p.getAvailable())
+                .description(p.getDescription())
                 .build();
+    }
+
+    public long countAvailableProperties() {
+        return repository.countByAvailableTrue();
+    }
+
+    public long countUnavailableProperties() {
+        return repository.countByAvailableFalse();
     }
 }
