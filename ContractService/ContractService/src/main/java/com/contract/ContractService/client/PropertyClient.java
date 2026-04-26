@@ -1,13 +1,11 @@
 package com.contract.ContractService.client;
 
+import com.contract.ContractService.dto.AvailabilityRequest;
 import com.contract.ContractService.dto.PropertyResponse;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;
-
-@FeignClient(name = "Property-Service")
-
+@FeignClient(name = "Property-Service", url = "${property.service.url:http://localhost:8081}")
 public interface PropertyClient {
 
     @GetMapping("/properties/{id}")
@@ -16,9 +14,6 @@ public interface PropertyClient {
     @PutMapping("/properties/{id}/availability")
     PropertyResponse updateAvailability(
             @PathVariable("id") Long id,
-            @RequestBody Map<String, Boolean> body
+            @RequestBody AvailabilityRequest request
     );
-
-    @GetMapping("/properties/{id}/check-availability")
-    PropertyResponse checkAvailability(@PathVariable("id") Long id);
 }

@@ -4,19 +4,24 @@ import com.property.Property_Service.dto.*;
 import com.property.Property_Service.entity.Property;
 import com.property.Property_Service.repository.PropertyRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PropertyService {
 
     private final PropertyRepository repository;
+    private final KafkaTemplate<String, PropertyEvent> kafkaTemplate;
+
+    private static final String PROPERTY_TOPIC = "property-events";
 
     // CREATE
     public PropertyResponse create(PropertyRequest request) {
-
         Property property = Property.builder()
                 .type(request.getType())
                 .address(request.getAddress())
@@ -24,7 +29,6 @@ public class PropertyService {
                 .description(request.getDescription())
                 .available(true)
                 .build();
-
         return toResponse(repository.save(property));
     }
 
@@ -40,14 +44,11 @@ public class PropertyService {
 
     // UPDATE
     public PropertyResponse update(Long id, PropertyRequest request) {
-
         Property p = repository.findById(id).orElseThrow();
-
         p.setType(request.getType());
         p.setAddress(request.getAddress());
         p.setRentPrice(request.getRentPrice());
         p.setDescription(request.getDescription());
-
         return toResponse(repository.save(p));
     }
 
@@ -56,16 +57,34 @@ public class PropertyService {
         repository.deleteById(id);
     }
 
-    // AVAILABILITY
+    // AVAILABILITY — publie un événement Kafka
     public PropertyResponse updateAvailability(Long id, AvailabilityRequest request) {
 
         Property p = repository.findById(id).orElseThrow();
         p.setAvailable(request.getAvailable());
+        Property saved = repository.save(p);
 
-        return toResponse(repository.save(p));
+        try {
+            PropertyEvent event = new PropertyEvent(
+                    saved.getId(),
+                    saved.getAvailable() ? "AVAILABLE" : "UNAVAILABLE",
+                    saved.getRentPrice(),
+                    saved.getAddress(),
+                    saved.getDescription().getRooms(),
+                    saved.getDescription().getSurface(),
+                    saved.getDescription().getCriteria()
+            );
+            kafkaTemplate.send(PROPERTY_TOPIC, saved.getId().toString(), event);
+            log.info("[PropertyService] Événement publié → type={}, propertyId={}",
+                    event.getEventType(), saved.getId());
+        } catch (Exception e) {
+            log.error("[PropertyService] Erreur Kafka (non bloquant) → {}", e.getMessage());
+        }
+
+        return toResponse(saved);
     }
 
-    // 🔥 SEARCH AVANCÉE
+    // SEARCH AVANCÉE
     public List<PropertyResponse> search(String keyword,
                                          Integer rooms,
                                          Double minSurface,
@@ -74,7 +93,6 @@ public class PropertyService {
                                          Double maxPrice,
                                          Boolean available) {
 
-        // 🔥 bonus S+2
         if (keyword != null && keyword.matches("S\\+\\d+")) {
             rooms = Integer.parseInt(keyword.split("\\+")[1]);
         }

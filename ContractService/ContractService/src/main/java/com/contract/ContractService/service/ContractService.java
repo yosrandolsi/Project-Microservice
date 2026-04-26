@@ -5,17 +5,17 @@ import com.contract.ContractService.dto.*;
 import com.contract.ContractService.entity.Contract;
 import com.contract.ContractService.exception.*;
 import com.contract.ContractService.repository.ContractRepository;
-import feign.FeignException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -23,12 +23,14 @@ public class ContractService {
 
     private final ContractRepository contractRepository;
     private final PropertyClient propertyClient;
+    private final KafkaTemplate<String, ContractEvent> kafkaTemplate;
+
+    private static final String CONTRACT_TOPIC = "contract-events";
 
     // ───────── CREATE CONTRACT ─────────
     public ContractResponse createContract(ContractRequest request) {
 
         Long propertyId = request.getPropertyId();
-
         PropertyResponse property = getPropertySafely(propertyId);
 
         if (!property.isAvailable()) {
@@ -39,6 +41,16 @@ public class ContractService {
             throw new ActiveContractException(propertyId);
         }
 
+        // 1. Marquer la propriété indisponible AVANT de sauvegarder
+        try {
+            propertyClient.updateAvailability(propertyId, new AvailabilityRequest(false));
+            log.info("[ContractService] Propriété {} marquée indisponible", propertyId);
+        } catch (Exception e) {
+            log.error("[ContractService] Erreur update availability → {}", e.getMessage());
+            throw new RuntimeException("Failed to update property availability: " + e.getMessage());
+        }
+
+        // 2. Sauvegarder le contrat
         Contract contract = new Contract();
         contract.setTenantId(request.getTenantId());
         contract.setPropertyId(propertyId);
@@ -48,11 +60,20 @@ public class ContractService {
         contract.setActive(true);
 
         Contract saved = contractRepository.save(contract);
+        log.info("[ContractService] Contrat créé → id={}", saved.getId());
 
+        // 3. Publier événement Kafka
         try {
-            propertyClient.updateAvailability(propertyId, Map.of("available", false));
-        } catch (FeignException e) {
-            throw new RuntimeException("Failed to update property availability");
+            kafkaTemplate.send(CONTRACT_TOPIC, saved.getId(), new ContractEvent(
+                    saved.getId(),
+                    "CONTRACT_CREATED",
+                    saved.getTenantId(),
+                    saved.getPropertyId(),
+                    saved.getMonthlyRent()
+            ));
+            log.info("[ContractService] Événement publié → CONTRACT_CREATED, contractId={}", saved.getId());
+        } catch (Exception e) {
+            log.error("[ContractService] Erreur Kafka (non bloquant) → {}", e.getMessage());
         }
 
         return mapToResponse(saved);
@@ -70,11 +91,8 @@ public class ContractService {
     // ───────── GET BY ID ─────────
     @Transactional(readOnly = true)
     public ContractResponse getContractById(String id) {
-
         Contract contract = contractRepository.findById(id)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("Contract not found: " + id));
-
+                .orElseThrow(() -> new ResourceNotFoundException("Contract not found: " + id));
         return mapToResponse(contract);
     }
 
@@ -82,8 +100,7 @@ public class ContractService {
     public ContractResponse terminateContract(String id) {
 
         Contract contract = contractRepository.findById(id)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException("Contract not found: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Contract not found: " + id));
 
         if (!contract.isActive()) {
             throw new ActiveContractException(contract.getPropertyId());
@@ -91,17 +108,35 @@ public class ContractService {
 
         contract.setActive(false);
         Contract updated = contractRepository.save(contract);
+        log.info("[ContractService] Contrat terminé → id={}", updated.getId());
 
+        // Libérer la propriété
         try {
-            propertyClient.updateAvailability(contract.getPropertyId(), Map.of("available", true));
-        } catch (FeignException e) {
-            throw new RuntimeException("Failed to release property");
+            propertyClient.updateAvailability(contract.getPropertyId(), new AvailabilityRequest(true));
+            log.info("[ContractService] Propriété {} libérée", contract.getPropertyId());
+        } catch (Exception e) {
+            log.error("[ContractService] Erreur release property → {}", e.getMessage());
+            throw new RuntimeException("Failed to release property: " + e.getMessage());
+        }
+
+        // Publier événement Kafka
+        try {
+            kafkaTemplate.send(CONTRACT_TOPIC, updated.getId(), new ContractEvent(
+                    updated.getId(),
+                    "CONTRACT_TERMINATED",
+                    updated.getTenantId(),
+                    updated.getPropertyId(),
+                    updated.getMonthlyRent()
+            ));
+            log.info("[ContractService] Événement publié → CONTRACT_TERMINATED, contractId={}", updated.getId());
+        } catch (Exception e) {
+            log.error("[ContractService] Erreur Kafka (non bloquant) → {}", e.getMessage());
         }
 
         return mapToResponse(updated);
     }
 
-    // ───────── 🔥 AVAILABILITY SOON (FIXED) ─────────
+    // ───────── AVAILABILITY SOON ─────────
     @Transactional(readOnly = true)
     public List<AvailableSoonResponse> getUpcomingAvailableProperties(int days) {
 
@@ -112,33 +147,48 @@ public class ContractService {
                 contractRepository.findByActiveTrueAndEndDateBetween(today, targetDate);
 
         return contracts.stream().map(contract -> {
-
             long daysRemaining = ChronoUnit.DAYS.between(today, contract.getEndDate());
-
             PropertyResponse property;
             try {
                 property = propertyClient.getPropertyById(contract.getPropertyId());
             } catch (Exception e) {
+                log.warn("[ContractService] Propriété non récupérée pour contrat {} → {}",
+                        contract.getId(), e.getMessage());
                 property = null;
             }
-
-            return new AvailableSoonResponse(
-                    daysRemaining,
-                    contract.getEndDate(),
-                    property
-            );
-
+            return new AvailableSoonResponse(daysRemaining, contract.getEndDate(), property);
         }).toList();
+    }
+
+    // ───────── ACTIVE / INACTIVE ─────────
+    @Transactional(readOnly = true)
+    public List<ContractResponse> getActiveContracts() {
+        return contractRepository.findByActiveTrue()
+                .stream()
+                .map(this::mapToResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<ContractResponse> getInactiveContracts() {
+        return contractRepository.findByActiveFalse()
+                .stream()
+                .map(this::mapToResponse)
+                .toList();
     }
 
     // ───────── PROPERTY CALL SAFE ─────────
     private PropertyResponse getPropertySafely(Long propertyId) {
         try {
-            return propertyClient.getPropertyById(propertyId);
-        } catch (FeignException.NotFound e) {
-            throw new ResourceNotFoundException("Property not found: " + propertyId);
-        } catch (FeignException e) {
-            throw new RuntimeException("Property-Service error");
+            log.info("[ContractService] Appel Property-Service → propertyId={}", propertyId);
+            PropertyResponse response = propertyClient.getPropertyById(propertyId);
+            log.info("[ContractService] Propriété reçue → id={}, available={}",
+                    response.getId(), response.isAvailable());
+            return response;
+        } catch (Exception e) {
+            log.error("[ContractService] Erreur Property-Service → type={}, message={}",
+                    e.getClass().getName(), e.getMessage());
+            throw new RuntimeException("Property-Service error: " + e.getMessage());
         }
     }
 
@@ -153,20 +203,5 @@ public class ContractService {
                 contract.getMonthlyRent(),
                 contract.isActive()
         );
-    }
-
-    @Transactional(readOnly = true)
-    public List<ContractResponse> getInactiveContracts() {
-        return contractRepository.findByActiveFalse()
-                .stream()
-                .map(this::mapToResponse)
-                .toList();
-    }
-    @Transactional(readOnly = true)
-    public List<ContractResponse> getActiveContracts() {
-        return contractRepository.findByActiveTrue()
-                .stream()
-                .map(this::mapToResponse)
-                .toList();
     }
 }

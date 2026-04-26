@@ -1,19 +1,20 @@
 package com.payment.payment_service.service;
 
-
-
 import com.payment.payment_service.dto.*;
 import com.payment.payment_service.entity.*;
 import com.payment.payment_service.exception.*;
 import com.payment.payment_service.feign.*;
 import com.payment.payment_service.repository.PaymentRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional
@@ -22,11 +23,14 @@ public class PaymentService {
     private final PaymentRepository paymentRepository;
     private final ContractClient contractClient;
     private final PropertyClient propertyClient;
+    private final KafkaTemplate<String, PaymentEvent> kafkaTemplate;
+
+    private static final String PAYMENT_TOPIC = "payment-events";
 
     // ─── CREATE ───────────────────────────────────────────────────────────────
     public PaymentResponse create(PaymentRequest request) {
 
-        // 1. Vérifier que le contrat existe via Feign → Contract-Service
+        // 1. Vérifier que le contrat existe
         ContractResponse contract;
         try {
             contract = contractClient.getContractById(request.getContractId());
@@ -34,14 +38,14 @@ public class PaymentService {
             throw new ContractNotFoundException(request.getContractId());
         }
 
-        // 2. Vérifier que le contrat est encore actif
+        // 2. Vérifier que le contrat est actif
         if (!contract.isActive()) {
             throw new InvalidPaymentException(
                     "Impossible de créer un paiement : le contrat "
                             + request.getContractId() + " est résilié.");
         }
 
-        // 3. Vérifier que la propriété existe via Feign → Property-Service
+        // 3. Vérifier que la propriété existe
         try {
             propertyClient.getPropertyById(request.getPropertyId());
         } catch (Exception e) {
@@ -49,7 +53,7 @@ public class PaymentService {
                     "Propriété introuvable avec l'ID : " + request.getPropertyId());
         }
 
-        // 4. Vérifier doublon : même contrat + même date + déjà COMPLETED
+        // 4. Vérifier doublon
         if (paymentRepository.existsByContractIdAndPaymentDateAndStatus(
                 request.getContractId(),
                 request.getPaymentDate(),
@@ -57,7 +61,7 @@ public class PaymentService {
             throw new PaymentAlreadyExistsException(request.getContractId());
         }
 
-        // 5. Créer le paiement avec statut PENDING par défaut
+        // 5. Créer le paiement
         Payment payment = Payment.builder()
                 .contractId(request.getContractId())
                 .propertyId(request.getPropertyId())
@@ -68,7 +72,8 @@ public class PaymentService {
                 .description(request.getDescription())
                 .build();
 
-        return toResponse(paymentRepository.save(payment));
+        Payment saved = paymentRepository.save(payment);
+        return toResponse(saved);
     }
 
     // ─── GET ALL ──────────────────────────────────────────────────────────────
@@ -113,17 +118,15 @@ public class PaymentService {
                 .collect(Collectors.toList());
     }
 
-    // ─── UPDATE STATUS ────────────────────────────────────────────────────────
+    // ─── UPDATE STATUS — publie un événement Kafka ────────────────────────────
     public PaymentResponse updateStatus(Long id, PaymentStatusRequest request) {
         Payment payment = findOrThrow(id);
 
-        // Un paiement remboursé ne peut plus être modifié
         if (payment.getStatus() == PaymentStatus.REFUNDED) {
             throw new InvalidPaymentException(
                     "Un paiement remboursé ne peut plus être modifié.");
         }
 
-        // Un paiement COMPLETED ne peut pas repasser à PENDING
         if (payment.getStatus() == PaymentStatus.COMPLETED
                 && request.getStatus() == PaymentStatus.PENDING) {
             throw new InvalidPaymentException(
@@ -131,14 +134,38 @@ public class PaymentService {
         }
 
         payment.setStatus(request.getStatus());
-        return toResponse(paymentRepository.save(payment));
+        Payment saved = paymentRepository.save(payment);
+
+        // Publier l'événement Kafka selon le nouveau statut
+        String eventType = switch (saved.getStatus()) {
+            case COMPLETED -> "PAYMENT_COMPLETED";
+            case FAILED    -> "PAYMENT_FAILED";
+            case REFUNDED  -> "PAYMENT_REFUNDED";
+            default        -> null;
+        };
+
+        if (eventType != null) {
+            PaymentEvent event = new PaymentEvent(
+                    saved.getId(),
+                    eventType,
+                    saved.getContractId(),
+                    saved.getPropertyId(),
+                    saved.getAmount(),
+                    saved.getStatus(),
+                    saved.getMethod(),
+                    saved.getPaymentDate()
+            );
+            kafkaTemplate.send(PAYMENT_TOPIC, saved.getId().toString(), event);
+            log.info("[PaymentService] Événement publié → type={}, paymentId={}", eventType, saved.getId());
+        }
+
+        return toResponse(saved);
     }
 
     // ─── DELETE ───────────────────────────────────────────────────────────────
     public void delete(Long id) {
         Payment payment = findOrThrow(id);
 
-        // Impossible de supprimer un paiement COMPLETED
         if (payment.getStatus() == PaymentStatus.COMPLETED) {
             throw new InvalidPaymentException(
                     "Un paiement complété ne peut pas être supprimé.");
@@ -147,14 +174,14 @@ public class PaymentService {
         paymentRepository.deleteById(id);
     }
 
-    // ─── TOTAL PAYÉ PAR CONTRAT ───────────────────────────────────────────────
+    // ─── TOTAL PAR CONTRAT ────────────────────────────────────────────────────
     @Transactional(readOnly = true)
     public Double getTotalByContract(String contractId) {
         Double total = paymentRepository.getTotalPaidByContract(contractId);
         return total != null ? total : 0.0;
     }
 
-    // ─── TOTAL PAYÉ PAR PROPRIÉTÉ ─────────────────────────────────────────────
+    // ─── TOTAL PAR PROPRIÉTÉ ──────────────────────────────────────────────────
     @Transactional(readOnly = true)
     public Double getTotalByProperty(Long propertyId) {
         Double total = paymentRepository.getTotalPaidByProperty(propertyId);
@@ -168,6 +195,22 @@ public class PaymentService {
                 .stream()
                 .map(this::toResponse)
                 .collect(Collectors.toList());
+    }
+
+    // ─── PAIEMENTS PAR CONTRATS ACTIFS ───────────────────────────────────────
+    @Transactional(readOnly = true)
+    public List<PaymentResponse> getActivePropertiesPaymentsByStatus(PaymentStatus status) {
+
+        List<ContractResponse> activeContracts = contractClient.getActiveContracts();
+
+        List<String> contractIds = activeContracts.stream()
+                .map(ContractResponse::getId)
+                .toList();
+
+        return paymentRepository.findByContractIdInAndStatus(contractIds, status)
+                .stream()
+                .map(this::toResponse)
+                .toList();
     }
 
     // ─── HELPERS ──────────────────────────────────────────────────────────────
@@ -187,24 +230,5 @@ public class PaymentService {
                 .paymentDate(p.getPaymentDate())
                 .description(p.getDescription())
                 .build();
-    }
-
-
-    @Transactional(readOnly = true)
-    public List<PaymentResponse> getActivePropertiesPaymentsByStatus(PaymentStatus status) {
-
-        // 1. récupérer contrats actifs
-        List<ContractResponse> activeContracts = contractClient.getActiveContracts();
-
-        // 2. récupérer les IDs
-        List<String> contractIds = activeContracts.stream()
-                .map(ContractResponse::getId)
-                .toList();
-
-        // 3. récupérer paiements filtrés
-        return paymentRepository.findByContractIdInAndStatus(contractIds, status)
-                .stream()
-                .map(this::toResponse)
-                .toList();
     }
 }

@@ -1,6 +1,7 @@
 package com.property.Property_Service.entity;
 
 import jakarta.persistence.*;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import lombok.*;
 
@@ -29,10 +30,9 @@ public class Property {
     @Column(nullable = false)
     private Double rentPrice;
 
-
+    @Valid                    // ✅ valide les champs internes de Description
     @Embedded
-    @NotNull(message = "La description est obligatoire")
-    private Description description;
+    private Description description; // ✅ @NotNull retiré de l'entité
 
     @Builder.Default
     @Column(nullable = false)
