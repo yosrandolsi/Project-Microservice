@@ -21,7 +21,11 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     // Tous les paiements d'une propriété
     List<Payment> findByPropertyId(Long propertyId);
+    // Paiements PENDING en retard
+    List<Payment> findByStatusAndPaymentDateBefore(PaymentStatus status, LocalDate date);
 
+    // Paiements PENDING à venir dans X jours
+    List<Payment> findByStatusAndPaymentDateBetween(PaymentStatus status, LocalDate start, LocalDate end);
     // Paiements par statut
     List<Payment> findByStatus(PaymentStatus status);
 

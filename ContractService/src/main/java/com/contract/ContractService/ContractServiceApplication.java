@@ -1,4 +1,4 @@
-package com.payment.payment_service;
+package com.contract.ContractService;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -8,8 +8,8 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @SpringBootApplication
 @EnableFeignClients
 @EnableScheduling
-public class PaymentServiceApplication {
+public class ContractServiceApplication {
 	public static void main(String[] args) {
-		SpringApplication.run(PaymentServiceApplication.class, args);
+		SpringApplication.run(ContractServiceApplication.class, args);
 	}
 }

@@ -19,23 +19,28 @@ public class ContractEventConsumer {
         try {
             ContractEvent event = objectMapper.readValue(payload, ContractEvent.class);
 
-            log.info("[PaymentService] Événement reçu → type={}, contractId={}, loyer={}",
-                    event.getEventType(),
-                    event.getContractId(),
-                    event.getMonthlyRent());
+            log.info("[PaymentService] Événement Contract reçu → type={}, contractId={}, loyer={}",
+                    event.getEventType(), event.getContractId(), event.getMonthlyRent());
 
             switch (event.getEventType()) {
                 case "CONTRACT_CREATED" ->
                         log.info("[PaymentService] Nouveau contrat → loyer mensuel attendu : {}",
                                 event.getMonthlyRent());
-                case "CONTRACT_TERMINATED" ->
-                        log.info("[PaymentService] Contrat résilié → plus de paiements pour : {}",
+
+                case "CONTRACT_TERMINATED", "CONTRACT_EXPIRED" ->
+                        log.warn("[PaymentService] Contrat terminé → plus de paiements pour : {}",
                                 event.getContractId());
+
+                case "CONTRACT_EXPIRING_SOON" ->
+                        log.info("[PaymentService] Contrat {} expire bientôt → prévoir dernier paiement",
+                                event.getContractId());
+
                 default ->
-                        log.warn("[PaymentService] Type inconnu : {}", event.getEventType());
+                        log.warn("[PaymentService] Type d'événement inconnu : {}", event.getEventType());
             }
+
         } catch (Exception e) {
-            log.error("[PaymentService] Erreur désérialisation ContractEvent", e);
+            log.error("[PaymentService] Erreur désérialisation ContractEvent → {}", e.getMessage(), e);
         }
     }
 }

@@ -18,7 +18,7 @@ public class Payment {
     private Long id;
 
     @Column(nullable = false)
-    private String contractId;      // référence Contract-Service (MongoDB)
+    private String contractId;
 
     @Column(nullable = false)
     private Long propertyId;

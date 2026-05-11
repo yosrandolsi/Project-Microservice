@@ -27,10 +27,10 @@ public class PaymentService {
 
     private static final String PAYMENT_TOPIC = "payment-events";
 
-    // ─── CREATE ───────────────────────────────────────────────────────────────
+
     public PaymentResponse create(PaymentRequest request) {
 
-        // 1. Vérifier que le contrat existe
+
         ContractResponse contract;
         try {
             contract = contractClient.getContractById(request.getContractId());
@@ -38,14 +38,14 @@ public class PaymentService {
             throw new ContractNotFoundException(request.getContractId());
         }
 
-        // 2. Vérifier que le contrat est actif
+
         if (!contract.isActive()) {
             throw new InvalidPaymentException(
                     "Impossible de créer un paiement : le contrat "
                             + request.getContractId() + " est résilié.");
         }
 
-        // 3. Vérifier que la propriété existe
+
         try {
             propertyClient.getPropertyById(request.getPropertyId());
         } catch (Exception e) {
@@ -53,7 +53,7 @@ public class PaymentService {
                     "Propriété introuvable avec l'ID : " + request.getPropertyId());
         }
 
-        // 4. Vérifier doublon
+
         if (paymentRepository.existsByContractIdAndPaymentDateAndStatus(
                 request.getContractId(),
                 request.getPaymentDate(),
@@ -61,7 +61,6 @@ public class PaymentService {
             throw new PaymentAlreadyExistsException(request.getContractId());
         }
 
-        // 5. Créer le paiement
         Payment payment = Payment.builder()
                 .contractId(request.getContractId())
                 .propertyId(request.getPropertyId())
@@ -76,7 +75,7 @@ public class PaymentService {
         return toResponse(saved);
     }
 
-    // ─── GET ALL ──────────────────────────────────────────────────────────────
+
     @Transactional(readOnly = true)
     public List<PaymentResponse> getAll() {
         return paymentRepository.findAll()
@@ -85,13 +84,12 @@ public class PaymentService {
                 .collect(Collectors.toList());
     }
 
-    // ─── GET BY ID ────────────────────────────────────────────────────────────
+
     @Transactional(readOnly = true)
     public PaymentResponse getById(Long id) {
         return toResponse(findOrThrow(id));
     }
 
-    // ─── GET BY CONTRACT ──────────────────────────────────────────────────────
     @Transactional(readOnly = true)
     public List<PaymentResponse> getByContract(String contractId) {
         return paymentRepository.findByContractId(contractId)
@@ -100,7 +98,7 @@ public class PaymentService {
                 .collect(Collectors.toList());
     }
 
-    // ─── GET BY PROPERTY ──────────────────────────────────────────────────────
+
     @Transactional(readOnly = true)
     public List<PaymentResponse> getByProperty(Long propertyId) {
         return paymentRepository.findByPropertyId(propertyId)
@@ -162,7 +160,7 @@ public class PaymentService {
         return toResponse(saved);
     }
 
-    // ─── DELETE ───────────────────────────────────────────────────────────────
+
     public void delete(Long id) {
         Payment payment = findOrThrow(id);
 
@@ -174,21 +172,21 @@ public class PaymentService {
         paymentRepository.deleteById(id);
     }
 
-    // ─── TOTAL PAR CONTRAT ────────────────────────────────────────────────────
+
     @Transactional(readOnly = true)
     public Double getTotalByContract(String contractId) {
         Double total = paymentRepository.getTotalPaidByContract(contractId);
         return total != null ? total : 0.0;
     }
 
-    // ─── TOTAL PAR PROPRIÉTÉ ──────────────────────────────────────────────────
+
     @Transactional(readOnly = true)
     public Double getTotalByProperty(Long propertyId) {
         Double total = paymentRepository.getTotalPaidByProperty(propertyId);
         return total != null ? total : 0.0;
     }
 
-    // ─── RECHERCHE COMBINÉE ───────────────────────────────────────────────────
+
     @Transactional(readOnly = true)
     public List<PaymentResponse> search(String contractId, Long propertyId, PaymentStatus status) {
         return paymentRepository.searchPayments(contractId, propertyId, status)
@@ -197,7 +195,6 @@ public class PaymentService {
                 .collect(Collectors.toList());
     }
 
-    // ─── PAIEMENTS PAR CONTRATS ACTIFS ───────────────────────────────────────
     @Transactional(readOnly = true)
     public List<PaymentResponse> getActivePropertiesPaymentsByStatus(PaymentStatus status) {
 
@@ -213,7 +210,6 @@ public class PaymentService {
                 .toList();
     }
 
-    // ─── HELPERS ──────────────────────────────────────────────────────────────
     private Payment findOrThrow(Long id) {
         return paymentRepository.findById(id)
                 .orElseThrow(() -> new PaymentNotFoundException(id));

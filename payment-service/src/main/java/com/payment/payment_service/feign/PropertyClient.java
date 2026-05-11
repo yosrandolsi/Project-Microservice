@@ -6,7 +6,7 @@ import org.springframework.web.bind.annotation.*;
 @FeignClient(name = "property-service")
 public interface PropertyClient {
 
-    // Récupérer une propriété par ID
+
     @GetMapping("/properties/{id}")
     PropertyResponse getPropertyById(@PathVariable("id") Long id);
 }

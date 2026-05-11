@@ -5,7 +5,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-@FeignClient(name = "ContractService")
+@FeignClient(name = "contract-service")
 public interface ContractClient {
 
     // Récupérer un contrat par ID

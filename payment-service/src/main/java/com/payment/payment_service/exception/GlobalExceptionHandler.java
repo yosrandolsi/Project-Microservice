@@ -14,35 +14,34 @@ import java.util.stream.Collectors;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    // 404 — Paiement introuvable
+
     @ExceptionHandler(PaymentNotFoundException.class)
     public ResponseEntity<ErrorResponse> handlePaymentNotFound(PaymentNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(build(HttpStatus.NOT_FOUND, "PAYMENT_NOT_FOUND", ex.getMessage()));
     }
 
-    // 404 — Contrat introuvable (via Feign)
+
     @ExceptionHandler(ContractNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleContractNotFound(ContractNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(build(HttpStatus.NOT_FOUND, "CONTRACT_NOT_FOUND", ex.getMessage()));
     }
 
-    // 409 — Paiement déjà existant
+
     @ExceptionHandler(PaymentAlreadyExistsException.class)
     public ResponseEntity<ErrorResponse> handleAlreadyExists(PaymentAlreadyExistsException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(build(HttpStatus.CONFLICT, "PAYMENT_ALREADY_EXISTS", ex.getMessage()));
     }
 
-    // 400 — Paiement invalide (contrat résilié, montant incorrect...)
+
     @ExceptionHandler(InvalidPaymentException.class)
     public ResponseEntity<ErrorResponse> handleInvalid(InvalidPaymentException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(build(HttpStatus.BAD_REQUEST, "INVALID_PAYMENT", ex.getMessage()));
     }
 
-    // 400 — Validation @Valid échoue
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> handleValidation(MethodArgumentNotValidException ex) {
         String message = ex.getBindingResult().getFieldErrors()
@@ -53,7 +52,7 @@ public class GlobalExceptionHandler {
                 .body(build(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", message));
     }
 
-    // 400 — Mauvais type de paramètre ex: /payments/abc
+
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
         String message = "Le paramètre '" + ex.getName() + "' doit être de type "
@@ -62,7 +61,7 @@ public class GlobalExceptionHandler {
                 .body(build(HttpStatus.BAD_REQUEST, "TYPE_MISMATCH", message));
     }
 
-    // 500 — Fallback
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleGeneric(Exception ex) {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
